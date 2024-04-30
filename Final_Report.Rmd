@@ -1,0 +1,1571 @@
+---
+title: "STAT 405 Group 1 Final Project Report"
+author: "Bill Huang, Patricia Hashimoto, Samuel Kwan, Anna Tutuianu, James Qu"
+output: 
+  pdf_document:
+    toc: true
+    fig_height: 3
+fontsize: 10pt
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(ggpubr)
+library(stringr)
+library(tidyverse)
+library(ggplot2)
+library(RSQLite)
+library(dplyr)
+library(kableExtra)
+library(grid)
+## Importing data
+dcon <- dbConnect(SQLite(), dbname = "mvc.sqlite")
+dbListTables(dcon)
+initExtension(dcon)
+
+data_crash <- as.data.frame(read.csv("mvc.csv"))
+data <- data_crash
+crash_hour <- gsub("():.*", "", data_crash$CRASH.TIME)
+crash_hour <- as.numeric(crash_hour)
+data_crash <- cbind(data_crash, crash_hour)
+data_crash$year <- str_replace(data_crash$CRASH.DATE, 
+                               "^(.*)/(.*)/(.*)$", "\\3")
+```
+
+\newpage
+
+# Background and Introduction
+```{r , include=FALSE}
+speedlimits <- read.csv("visionzerospeedlimits.csv")
+
+## Here's the script to make a plot showing the number of crashes, injuries, and
+## fatalities by year 
+data_crasha <- data_crash %>%
+  mutate(Day = as.numeric(substr(CRASH.DATE, 4, 5))) %>%
+  mutate(Month = as.numeric(substr(CRASH.DATE, 1, 2))) %>%
+  mutate(Year = as.numeric(substr(CRASH.DATE, 7, 10))) %>%
+  filter(Year != 2012 & Year != 2022)
+
+casualtycountbyyear <- group_by(data_crasha, Year) %>%
+  dplyr::summarise(count = n(),
+    `Kill Count` = sum(NUMBER.OF.PERSONS.KILLED, na.rm = TRUE),
+    `Injury Count` = sum(NUMBER.OF.PERSONS.INJURED, na.rm = TRUE),
+    `Total Casualties` = `Kill Count` + `Injury Count`,
+    `Crash Count` = sum(count))
+casualtycountbyyear$Year <- factor(casualtycountbyyear$Year, levels=c(2012:2022))
+casualtycountbyyeara <- casualtycountbyyear %>% 
+  select("Kill Count", "Crash Count", "Injury Count", "Year") %>%
+  gather("Crash Count", "Kill Count", "Injury Count", key = "Count Type", value = "Count")
+
+comparingyearsplot <- ggplot(casualtycountbyyeara) +
+  aes(x = Year, y = Count) +
+  labs(x = "Year",
+       y = "Number of Persons",
+       title = "Crashes, Injuries, and Fatalities by Year") + 
+  geom_line(aes(group = "Year", col =`Count Type`)) +
+  facet_wrap("`Count Type`", scales = "free", ncol = 1) + 
+  theme(legend.position="none")
+
+## Here's the script to make a plot showing the most common reasons for summonses
+## The data comes from multiple excel files from different years, but I've
+## combined it into a folder of csv files for the convenience of the group
+
+## https://www1.nyc.gov/assets/nypd/downloads/excel/traffic_data/archive/2018-05-sum-excel.zip
+## https://www1.nyc.gov/assets/nypd/downloads/excel/traffic_data/archive/2019-05-sum-excel.zip
+## https://www1.nyc.gov/assets/nypd/downloads/excel/traffic_data/archive/2020-05-sum-excel.zip
+## https://www1.nyc.gov/assets/nypd/downloads/excel/traffic_data/archive/2021-05-sum-excel.zip
+## https://www1.nyc.gov/assets/nypd/downloads/excel/traffic_data/mv-en-us-citysum.xlsx
+
+
+summonses2018 <- read.csv("citywidesummons2018.csv")[c(-1, -2), ]
+summonses2019 <- read.csv("citywidesummons2019.csv")[c(-1, -2), ]
+summonses2020 <- read.csv("ciytwidesummons2020.csv")[c(-1, -2), ]
+summonses2021 <- read.csv("citywidesummons2021.csv")[c(-1, -2), ]
+summonses2022 <- read.csv("citywidesummons2022.csv")[c(-1, -2), ]
+
+## since downloaded data is from May for each year, we don't need to get rid
+## of subsequent months in previous years
+colnames(summonses2018) <- summonses2018[1,]
+colnames(summonses2019) <- summonses2019[1,]
+colnames(summonses2020) <- summonses2020[1,]
+colnames(summonses2021) <- summonses2021[1,]
+colnames(summonses2022) <- summonses2022[1,]
+
+summonses2018 <- summonses2018[c(-1, -49), ]
+summonses2019 <- summonses2019[c(-1, -49), ]
+summonses2021 <- summonses2021[c(-1, -49), ]
+summonses2022 <- summonses2022[c(-1, -49), ]
+
+suppressPackageStartupMessages(library(tidyverse))
+suppressMessages(summonsesYTD <- summonses2020 %>%
+  inner_join(summonses2018) %>%
+  inner_join(summonses2019) %>%
+  inner_join(summonses2021) %>%
+  inner_join(summonses2022) %>%
+  select("Offense Description", "YTD 2018", "YTD 2019",
+         "YTD 2020", "YTD 2021", "YTD 2022") %>%
+  rename("Offense" = "Offense Description",
+         "2018" = "YTD 2018",
+         "2019" = "YTD 2019",
+         "2020" = "YTD 2020",
+         "2021" = "YTD 2021",
+         "2022" = "YTD 2022") %>%
+  mutate(`2018` = as.numeric(`2018`),
+         `2019` = as.numeric(`2019`),
+         `2020` = as.numeric(`2020`),
+         `2021` = as.numeric(`2021`),
+         `2022` = as.numeric(`2022`)))
+  
+summonsesYTDa <- summonsesYTD %>% 
+  filter(`2022` > 10000) %>%
+  filter(Offense != "CitywideTOTAL Movers ") %>%
+  gather("2018", "2019", "2020", "2021", "2022", key = "Year", value = "Count")
+
+summonsesplot <- ggplot(summonsesYTDa) + 
+  aes(x = Year, y = Count) + 
+  labs(title = "New York City Moving Violations With Over 10,000 YTD Summonses in May 2022") +
+  geom_line(aes(group = Offense, color = Offense))
+
+## And now for the streets by speed limit
+speedlimits <- read.csv("visionzerospeedlimits.csv")
+
+
+
+## get vector of unique street names
+uniquestreets <- c(unique(str_to_lower(gsub("[[:space:]]", "", speedlimits$street))))
+
+## get the highest speed limit for each street
+maxspeedlimits <- speedlimits[, c("street", "postvz_sl")] %>%
+  mutate(street = str_to_lower(street)) %>%
+  mutate(street = gsub("[[:space:]]", "", street)) %>%
+  filter(street != "" & is.na(street) == FALSE) %>%
+  distinct(.keep_all = TRUE) %>%
+  select(street, postvz_sl) %>%
+  group_by(street) %>%
+  top_n(1, postvz_sl) %>%
+  dplyr::rename(speedlimit = postvz_sl,) %>%
+  ungroup()
+
+## add the max speed limit to the crash data and turn NA casualties into 0s
+data_crash_edit <- data_crash %>%
+  mutate(strippedstreet = str_to_lower(ON.STREET.NAME)) %>%
+  mutate(strippedstreet = gsub("[[:space:]]", "", strippedstreet)) %>%
+  filter(strippedstreet != "" & is.na(strippedstreet) == FALSE) %>%
+  full_join(maxspeedlimits, by = c("strippedstreet" = "street")) %>%
+  mutate_at("NUMBER.OF.PERSONS.INJURED", function(num) ifelse(is.na(num), 0, as.numeric(num))) %>%
+  mutate_at("NUMBER.OF.PERSONS.KILLED", function(num) ifelse(is.na(num), 0, as.numeric(num))) %>%
+  filter(strippedstreet != "" & is.na(strippedstreet) == FALSE)
+
+
+## finding the total kills, injuries, and combined for each street
+casualtycount <- group_by(data_crash_edit, strippedstreet) %>%
+  dplyr::summarise(
+            killcount = sum(NUMBER.OF.PERSONS.KILLED),
+            injurycount = sum(NUMBER.OF.PERSONS.INJURED),
+            totalcasualties = killcount + injurycount, 
+            speedlimit = mean(speedlimit))
+
+## getting top ten streets with most kills, injuries, and combined
+casualtyhead <- casualtycount[order(casualtycount$totalcasualties, decreasing = TRUE),][1:10,]
+killhead <- casualtycount[order(casualtycount$killcount, decreasing = TRUE),][1:10,]
+injuryhead <- casualtycount[order(casualtycount$injurycount, decreasing = TRUE),][1:10,]
+
+## making a stacked barplot with kills and injuries
+casualtytable <- t(matrix(c(casualtyhead$killcount, casualtyhead$injurycount), ncol = 2))
+rownames(casualtytable) <- c("kills", "injuries")
+colnames(casualtytable) <- c(casualtyhead$strippedstreet)
+
+# par(mar = c(15, 4, 4, 4) + 0.1)
+# casualtyplot <- barplot(casualtytable, 
+#         names.arg = casualtyhead$strippedstreet, col = c("#FF0033", "#FFCCCC"),
+#         las = 2, ylim = c(0, max(casualtyhead$totalcasualties) + 1200),
+#         main = "Streets with Highest Combined Kills and Injuries",
+#         legend.text = rownames(casualtytable))
+# text(x = casualtyplot, y = casualtytable["kills", ] + 130, 
+#      labels = casualtytable["kills", ], col = "black")
+# text(x = casualtyplot, y = casualtytable["injuries", ] + casualtytable["kills", ] + 130, 
+#      labels = casualtytable["injuries", ], col = "black")
+
+## remove crashes that don't have known speed
+## in order to make plots with speed limit
+data_crash_noNAs <- data_crash_edit %>%
+  filter(!is.na(speedlimit))
+
+casualtycount_noNAs <- group_by(data_crash_noNAs, strippedstreet) %>%
+  dplyr::summarise(
+    killcount = sum(NUMBER.OF.PERSONS.KILLED),
+    injurycount = sum(NUMBER.OF.PERSONS.INJURED),
+    totalcasualties = killcount + injurycount, 
+    speedlimit = mean(speedlimit))
+
+casualtyhead_noNAs <- casualtycount_noNAs[order(casualtycount_noNAs$totalcasualties, decreasing = TRUE),][1:10,]
+killhead_noNAs <- casualtycount_noNAs[order(casualtycount_noNAs$killcount, decreasing = TRUE),][1:10,]
+injuryhead_noNAs <- casualtycount_noNAs[order(casualtycount_noNAs$injurycount, decreasing = TRUE),][1:10,]
+
+casualtytable_noNAs <- t(matrix(c(casualtyhead_noNAs$killcount, casualtyhead_noNAs$injurycount), ncol = 2))
+rownames(casualtytable_noNAs) <- c("kills", "injuries")
+colnames(casualtytable_noNAs) <- c(casualtyhead_noNAs$strippedstreet)
+
+
+```
+
+## Introduction
+The COVID-19 pandemic has created an unusual backdrop for car crash data analysis both in New York City and nationwide. Starting in 2020, the national number of car crashes and traffic injuries declined, but the number of fatal crashes increased. From 2019 to 2020, the number of fatal crashes in the U.S. increased by 6.8% (NHTSA 2022b). The National Highway Traffic Safety Administration estimated that 42,915 people died in traffic accidents in 2021 (compared to 38,824 in 2020) (NHTSA 2022b). This analysis investigates the motor vehicle collisions that occurred in New York City from 2012 to April 2022.
+
+New York City’s efforts to reduce traffic fatalities make collision data from the city noteworthy, and the city’s wide range of publicly accessible traffic data offers multiple metrics to connect. The city began a transportation policy, Vision Zero, in 2014 with the intention of eliminating all traffic deaths, and this policy has become a national model (Hu 2022). The program has involved reducing speed limits on some streets from 30 m.p.h. to 25 m.p.h., creating a network of automated speed cameras, and redesigning streets to be more pedestrian- and cyclist-friendly (Hu 2022). New York City officials have also lobbied state lawmakers for local control of city streets under the belief that city authority to set speed limits, expand red light cameras, and increase hours for school zone speed cameras could make streets safer (Hu 2022). In May 2022, responding to traffic fatality rates that have reached an eight-year high, the city debuted a $4 million billboard and media campaign to stop speeding, which has increased during the pandemic, and Mayor Eric Adams has pledged $904 million to improve the city’s streets plan with measures like intersection redesigns, new protected bike lanes, and more pedestrian areas in the next five years (Hu 2022). The high toll of car crashes on human life makes the causes of, trends in, and effects of policies and current events on traffic fatalities urgent issues of investigation, and New York City’s unusually accessible and complete data makes questions about these issues possible to answer.
+
+## Data Sources
+The primary dataset in this analysis contains approximately 1.9 million observations of motor vehicle collisions in New York City from 2012 to April 2022. The 29 columns include information like date, time, contributing factors, vehicle types, borough, zip code, and other details about each crash. This information comes from the New York Police Department: when a collision that causes an injury, a death, or more than $1000-worth of property damage, the New York Police Department files a Police Accident Report with a form MV-104AN (Police Crash Report Submission Instructions, p. 1). The information in the primary dataset comes from these forms. 
+
+The following report includes comparisons with other data sources, including comparisons with national car crash data, and secondary datasets that add another dimension to our primary dataset. Secondary data included to provide context and background include records of New York City moving violation summonses and New York City streets’ speed limits, and secondary data included more comparison include New York state speeding ticket records and information on distracted driving across the United States.
+
+## First Look at Primary Dataset
+The following plot shows the number of traffic collisions, injuries, and fatalities in recorded in the primary data set. Though our secondary data does not include comparably detailed numbers for national motor vehicle collision data that these trends could be tested against, the decrease in crashes and injuries in 2020 and the increase in fatalities reflect the national trends during the pandemic (NHTSA 2022b). Though New York City's traffic environment is not representative of the United States', the consistency in these trends suggests that analysis of New York City's traffic data may provide insight into pandemic era changes that have affected fatality rates and driver behavior.
+
+```{r echo = FALSE}
+comparingyearsplot
+```
+
+## Context 
+The primary data set used in this report, like any large collection of non-experimental observations, does not only or wholly represent car crashes in New York City. Because information on each collision comes from a police report, the data reflects policing practices and civilian reporting practices. Though Section 605 of New York's Vehicle and Traffic Law makes failure to report an accident or failure to give correct information in connection with an accident report a misdemeanor (Police Crash Report Submission Instructions, p. 2), it is unlikely that all accidents are reported. A 2010 phone survey in Washington D.C. estimated that approximately 30 percent of motor vehicle collisions, which tend to be less severe, are not reported to the police (Davis & Co. 2015). While Washington D.C. reporting rates may differ from New York City reporting rates, New York City drivers may not always report car accidents, and their patterns of reporting are likely correlated with variables such as injury, value of damage, and certain contributing factors.
+
+Additionally, because an officer at the scene of the collision is typically responsible for filling out the Police Accident Report form, policing patterns likely affect which crashes are recorded. For example, if the police department polices certain areas more heavily, they may file more reports for collisions in those areas while collisions in other areas may go unreported at higher rates.
+
+To demonstrate how reporting practices and policing patterns affect outcomes, a plot of the most common New York City moving violation summonses by year is included below. Because this plot uses data through May 2022, each point uses data from January through May of its given year to maintain consistency. Summons data, which which follows from report data, demonstrates to a higher degree the strengths and weaknesses of data from police reports. The summons data, even more so than the primary data set, does not represent all collisions in New York City but instead demonstrates the laws and practices that lead to consequences for collisions. For example, despite the spiking traffic fatalities in 2021, the total number of tickets issued decreased substantially. While this decrease is partially attributable to a reduction in the number of cars on the streets during the pandemic, New Yorkers like City Councilman Ben Kallos point to reduced traffic enforcement (Hu 2021). The NYPD blame reduced enforcement on officer illness, a hiring freeze, and officer assignment to cover protests (Hu 2021). The numerous factors that contribute to traffic collisions, fatalities, and reporting, especially without data on traffic volume, require caution in interpreting the causes of pandemic-era trends.
+
+```{r}
+summonsesplot
+```
+
+
+
+# Analysis on Reasons leading to Crashes
+
+
+## Reasons for crashes
+<br>
+<font size=6, style="color:blue">The WHO reported that Every year the lives of approximately 1.3 million people are cut short as a result of a road traffic crash. Between 20 and 50 million more people suffer non-fatal injuries, with many incurring a disability as a result of their injury.</font>
+<br>
+## The top risk factors behind these crashes include: 
+<font color="blue">
+
+- Speeding
+- DUI
+- Distracted Driving
+- Nonuse of helmets/seatbelts
+- Unsafe road infrastructure/vehicle
+- etc.
+
+</font>
+<span style="color:black">We specifically looked at **Speeding** and **Distracted Driving** in our research due to the limitation of our dataset.</span>
+
+
+## Overview of the reasons in our dataset
+<span style="color:black; size=4">We took the top 9 reasons for crashes from our dataset. Some of their corresponding values are as follow:</font>
+```{r, echo=FALSE}
+table_reason <- sort(table(data_crash$CONTRIBUTING.FACTOR.VEHICLE.1), 
+                     decreasing = T)
+table_reason_value <- as.numeric(table_reason[2:10])
+table_reason_name <- names(table_reason)[2:10]
+table <- cbind(table_reason_name, table_reason_value)
+colnames(table) = c("Reason", "Value")
+table <- data.frame(table)
+table <- table %>%
+        summarise(Reason = Reason,
+                  Value = as.numeric(Value),
+                  Percentage = paste(round(Value / sum(Value),3)*100, 
+                                     "%", sep = "")
+                  )
+knitr::kable(table)
+```
+
+
+## Distracted Driving | Our own graph 
+<font size=3, style="color:black">From our table, we decided to plot the percentages into a pie chart. As we can see, "distracted driving" has the highest occurrence with 41% of all crashes.</font>
+
+```{r, fig.align='center', echo=FALSE}
+ggplot(table, aes(x="", y = Value, fill = Reason)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar(theta = "y", start=0) +
+  theme_void() +
+  geom_text(aes(label = Percentage), 
+            position = position_stack(vjust = 0.5),
+            color = "white", size=2)
+```
+
+
+## Distracted Driving | External data
+<font size=4, style="color:black">On the other hand, we found a graph that describes the situation on distracted driving nationwide in 2017.</font>
+<br>
+<br>
+![](image1.png)
+From the graph on the left, if we add up all the percentages from all age groups, we would actually get roughly 40%. This shows that distracted driving may well become the biggest reason for road crashes, taking up almost half of all occurrences of crashes in both cases. 
+
+
+## Speeding | External data 
+<font size=3, style="color:black">From *New York Speeding Ticket Data*, The article analyzed data from the New York State Department of Motor Vehicles to determine the most common times and locations that police issue speeding tickets. The data extracts the speeding ticket count from different times in New York from 2009 to 2020.</font>
+![](image2.png)
+From the graph, we can see that there is a maximum number of tickets handed out at around 9am. This may be due to the morning rush hour, where people tend to drive faster in order to get to work on time.
+
+
+## Speeding | Our own graph 
+
+<font size=3, style="color:black">We extracted all the data with "speeding" as the contribution factor of the crash, and then we plotted the count of the crashes at each time of the day.</font>
+<br>
+
+```{r, fig.align='center', fig.height=3, fig.width=5, echo=FALSE, message=FALSE}
+data_crash_speeding <- data_crash[data_crash$CONTRIBUTING.FACTOR.VEHICLE.1 == "Unsafe Speed",]
+table_speeding <- data_crash_speeding %>%
+                    group_by(year, crash_hour) %>%
+                    summarise(count = n())
+  
+         
+ggplot(table_speeding, aes(x = crash_hour, y = count, col = year))+
+          geom_point()+
+          geom_line()+
+          labs(title = "Number of crashes caused by speeding",
+               x = "Time of the day",
+               y = "Number of crashes")
+
+```
+As we can see, there appears to be an increasing trend since 6am until 9am, where most of the trend hit a local max at around 8 or 9am in our graph. Recall that we see a maximum number of speeding tickets handed out at around 9am, which implies there may be more occurrences of speeding. Here, the graph seems to imply that more speeding can potentially cause more crashes. 
+
+### Although we find some interesting trends for the reasons behind the crashes, more rigorous models need to be implemented to further investigate the correlation, as we did in our later research.
+
+
+
+
+
+
+# Analysis on Types of vehicle involved in Crashes
+
+In this section, we will analyze the types of vehicles that are involved in the collisions. 
+
+## Amount of Vehicles in collisions
+We first take a look at the amount of vehicles that are involved in each crash.
+The table below records the cumulative and individual percentage and amount of vehicles involved in the crashes.
+For example, 82.24% of the crashes recorded involve at least two vehicles while 75.51%
+of the crashes recorded involves exactly two vehicles. To no surprise, two vehicle crashes takes up the majority
+of the crashes recorded. 
+
+Please note that 99.42% of the crashes recorded involved at least one vehicle. This suggests that 0.58% of crashes in the data
+did not have the amount of vehicles record since logically, at least one vehicle should be involved in a collision.
+
+
+
+```{r, echo = FALSE, eval = TRUE}
+
+main_data_vehicle_cumulative_count <- c(length(data$VEHICLE.TYPE.CODE.1[data$VEHICLE.TYPE.CODE.1 != ""]), 
+                             length(data$VEHICLE.TYPE.CODE.2[data$VEHICLE.TYPE.CODE.2 != ""]),
+                             length(data$VEHICLE.TYPE.CODE.3[data$VEHICLE.TYPE.CODE.3 != ""]),
+                             length(data$VEHICLE.TYPE.CODE.4[data$VEHICLE.TYPE.CODE.4 != ""]),
+                             length(data$VEHICLE.TYPE.CODE.5[data$VEHICLE.TYPE.CODE.5 != ""]))
+cumulative_percentage <- round((main_data_vehicle_cumulative_count / nrow(data)) * 100, 2)
+main_data_vehicle_count <- c(main_data_vehicle_cumulative_count[1] - main_data_vehicle_cumulative_count[2],
+                             main_data_vehicle_cumulative_count[2] - main_data_vehicle_cumulative_count[3],
+                             main_data_vehicle_cumulative_count[3] - main_data_vehicle_cumulative_count[4],
+                             main_data_vehicle_cumulative_count[4] - main_data_vehicle_cumulative_count[5],
+                             main_data_vehicle_cumulative_count[5])
+percentage <- round((main_data_vehicle_count / nrow(data)) * 100, 2)
+
+
+df <- data.frame(rbind(main_data_vehicle_cumulative_count , cumulative_percentage, main_data_vehicle_count, percentage ))
+rownames(df) <- c("Cumulative Amount of Vehicles", "Cumulative Percentage of Total Collisions Recorded", 
+                  "Amount of Vehicles", "Percentage of Total Collisions Recorded")
+colnames(df) <- c("One Vehicle", "Two Vehicles", "Three Vehicles", 
+                  "Four Vehicles", "Five Vehicles")
+
+options(scipen=999)
+
+
+kable(head(df), format="latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options="scale_down")
+
+```
+
+
+
+## Types of Vehicles
+To categorize the type of vehicles that were involved in the crashes, we divided the types of vehicles into 5 main categories:\
+- Sedans\
+- SUVS\
+- Taxis\
+- Trucks\
+- Bikes\
+
+Due to the majority of the data being one or two car accidents, we present two pie charts that show the distribution of the first and second vehicle involved in each crash. The largest categories of vehicles involved in crashes were SUVs and Sedans. 
+
+
+```{r, echo = FALSE, eval = TRUE, fig.height= 4}
+
+## (combined sedans, combined SUVs, combined taxis, buses and trucks and 6 wheelers, bikes and motorcycles)
+
+combined_sedans <- subset(data, data$VEHICLE.TYPE.CODE.1 == "Sedan" | data$VEHICLE.TYPE.CODE.1 == "4 dr sedan")
+combined_SUVs <- subset(data, data$VEHICLE.TYPE.CODE.1 == "Station Wagon/Sport Utility Vehicle" |
+                                 data$VEHICLE.TYPE.CODE.1 == "SPORT UTILITY / STATION WAGON")
+combined_taxis <- subset(data, data$VEHICLE.TYPE.CODE.1 == "TAXI" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Taxi")
+combined_trucks <- subset(data, data$VEHICLE.TYPE.CODE.1 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.1 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.1 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Pick-up Truck")
+combined_bikes <- subset(data, data$VEHICLE.TYPE.CODE.1 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "MOTORCYCLE")
+
+
+##pie chart 1
+sum <- nrow(combined_sedans) + nrow(combined_SUVs)  + nrow(combined_taxis) + 
+   nrow(combined_trucks) +  nrow(combined_bikes)
+probability <- c(nrow(combined_sedans) / nrow(data),
+           nrow(combined_SUVs) / nrow(data),
+           nrow(combined_taxis) / nrow(data),
+           nrow(combined_trucks) / nrow(data),
+           nrow(combined_bikes) / nrow(data),
+           (nrow(data) - sum) / nrow(data))
+
+pie(probability, labels = paste(round(probability*100, 2), "%", sep = ""), 
+    main = "Vehicle 1 Distribution", col = rainbow(length(probability)),  radius = 0.5)
+legend("topright", c("Sedans", "SUVs", "Taxis", "Bus/Trucks", "Bikes", "Others"), 
+       fill = rainbow(length(probability)))
+
+       
+combined_sedans2 <- subset(data, data$VEHICLE.TYPE.CODE.2 == "Sedan" | data$VEHICLE.TYPE.CODE.1 == "4 dr sedan")
+combined_SUVs2 <- subset(data, data$VEHICLE.TYPE.CODE.2 == "Station Wagon/Sport Utility Vehicle" |
+                                 data$VEHICLE.TYPE.CODE.2 == "SPORT UTILITY / STATION WAGON")
+combined_taxis2 <- subset(data, data$VEHICLE.TYPE.CODE.2 == "TAXI" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Taxi")
+combined_trucks2 <- subset(data, data$VEHICLE.TYPE.CODE.2 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.2 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.2 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Pick-up Truck")
+combined_bikes2 <- subset(data, data$VEHICLE.TYPE.CODE.2 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "MOTORCYCLE")
+combined_valid2 <- subset(data, data$VEHICLE.TYPE.CODE.2 != "")
+
+##pie chart 2
+sum <- nrow(combined_sedans2) + nrow(combined_SUVs2)  + nrow(combined_taxis2) + 
+   nrow(combined_trucks2) +  nrow(combined_bikes2)
+probability2 <- c(nrow(combined_sedans2) / nrow(combined_valid2),
+           nrow(combined_SUVs2) / nrow(combined_valid2 ),
+           nrow(combined_taxis2) / nrow(combined_valid2),
+           nrow(combined_trucks2) / nrow(combined_valid2 ),
+           nrow(combined_bikes2) / nrow(combined_valid2 ),
+           (nrow(combined_valid2) - sum) / nrow(combined_valid2 ))
+
+pie(probability2, labels = paste(round(probability2*100, 2), "%", sep = ""), 
+    main = "Vehicle 2 Distribution", col = rainbow(length(probability2)), radius = 0.4)
+legend("topright", c("Sedans", "SUVs", "Taxis", "Bus/Trucks", "Bikes", "Others"), 
+       fill = rainbow(length(probability)))
+
+
+
+
+options(scipen=999)
+```
+
+
+## Injury and Fatality Percentage
+The below bar graph shows the percentage of drivers for each type of vehicle who experienced a injury or a fatality. While the fatality rate for most crashes is less than 1%. Bikes and motorcycles, who have the highest injury rate by a great margin had significant fatality rate of over 1%. 
+\
+
+
+
+```{r, echo = FALSE, eval = TRUE}
+##Fatality/ percentage depending on vehicle type
+combined_sedans_all <- subset(data, data$VEHICLE.TYPE.CODE.1 == "Sedan" | data$VEHICLE.TYPE.CODE.1 == "4 dr sedan" |
+                                    data$VEHICLE.TYPE.CODE.2 == "Sedan" | data$VEHICLE.TYPE.CODE.2 == "4 dr sedan" |
+                                    data$VEHICLE.TYPE.CODE.3 == "Sedan" | data$VEHICLE.TYPE.CODE.3 == "4 dr sedan" |
+                                    data$VEHICLE.TYPE.CODE.4 == "Sedan" | data$VEHICLE.TYPE.CODE.4 == "4 dr sedan" |
+                                    data$VEHICLE.TYPE.CODE.5 == "Sedan" | data$VEHICLE.TYPE.CODE.5 == "4 dr sedan")
+combined_SUVs_all<-    subset(data, data$VEHICLE.TYPE.CODE.1 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.1 == "SPORT UTILITY / STATION WAGON" |
+                                    data$VEHICLE.TYPE.CODE.2 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.2 == "SPORT UTILITY / STATION WAGON" |
+                                    data$VEHICLE.TYPE.CODE.3 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.3 == "SPORT UTILITY / STATION WAGON" |
+                                    data$VEHICLE.TYPE.CODE.4 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.4 == "SPORT UTILITY / STATION WAGON" |
+                                    data$VEHICLE.TYPE.CODE.5 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.5 == "SPORT UTILITY / STATION WAGON")
+combined_taxis_all <-  subset(data, data$VEHICLE.TYPE.CODE.1 == "TAXI" | data$VEHICLE.TYPE.CODE.1 == "Taxi" |
+                                    data$VEHICLE.TYPE.CODE.2 == "TAXI" | data$VEHICLE.TYPE.CODE.2 == "Taxi" |
+                                    data$VEHICLE.TYPE.CODE.3 == "TAXI" | data$VEHICLE.TYPE.CODE.3 == "Taxi" |
+                                    data$VEHICLE.TYPE.CODE.4 == "TAXI" | data$VEHICLE.TYPE.CODE.4 == "Taxi" |
+                                    data$VEHICLE.TYPE.CODE.5 == "TAXI" | data$VEHICLE.TYPE.CODE.5 == "Taxi")
+combined_trucks_all <- subset(data, data$VEHICLE.TYPE.CODE.1 == "Bus" | data$VEHICLE.TYPE.CODE.1 == "BUS" | data$VEHICLE.TYPE.CODE.1 == "PICK-UP TRUCK" | data$VEHICLE.TYPE.CODE.1 == "Box Truck" | 
+                                    data$VEHICLE.TYPE.CODE.1 == "Pick-up Truck"|
+                                    data$VEHICLE.TYPE.CODE.2 == "Bus" | data$VEHICLE.TYPE.CODE.2 == "BUS" | data$VEHICLE.TYPE.CODE.2 == "PICK-UP TRUCK" | data$VEHICLE.TYPE.CODE.2 == "Box Truck" | 
+                                    data$VEHICLE.TYPE.CODE.2 == "Pick-up Truck"|
+                                    data$VEHICLE.TYPE.CODE.3 == "Bus" | data$VEHICLE.TYPE.CODE.3 == "BUS" | data$VEHICLE.TYPE.CODE.3 == "PICK-UP TRUCK" | data$VEHICLE.TYPE.CODE.3 == "Box Truck" | 
+                                    data$VEHICLE.TYPE.CODE.3 == "Pick-up Truck"|
+                                    data$VEHICLE.TYPE.CODE.4 == "Bus" | data$VEHICLE.TYPE.CODE.4 == "BUS" | data$VEHICLE.TYPE.CODE.4 == "PICK-UP TRUCK" | data$VEHICLE.TYPE.CODE.4 == "Box Truck" | 
+                                    data$VEHICLE.TYPE.CODE.4 == "Pick-up Truck"|
+                                    data$VEHICLE.TYPE.CODE.5 == "Bus" | data$VEHICLE.TYPE.CODE.5 == "BUS" | data$VEHICLE.TYPE.CODE.5 == "PICK-UP TRUCK" | data$VEHICLE.TYPE.CODE.5 == "Box Truck" | 
+                                    data$VEHICLE.TYPE.CODE.5 == "Pick-up Truck")
+combined_bikes_all <- subset(data,  data$VEHICLE.TYPE.CODE.1 == "Bike" | data$VEHICLE.TYPE.CODE.1 == "Motorcycle" |  data$VEHICLE.TYPE.CODE.1 == "MOTORCYCLE" |
+                                    data$VEHICLE.TYPE.CODE.2 == "Bike" | data$VEHICLE.TYPE.CODE.2 == "Motorcycle" |  data$VEHICLE.TYPE.CODE.2 == "MOTORCYCLE" |
+                                    data$VEHICLE.TYPE.CODE.3 == "Bike" | data$VEHICLE.TYPE.CODE.3 == "Motorcycle" |  data$VEHICLE.TYPE.CODE.3 == "MOTORCYCLE" |
+                                    data$VEHICLE.TYPE.CODE.4 == "Bike" | data$VEHICLE.TYPE.CODE.4 == "Motorcycle" |  data$VEHICLE.TYPE.CODE.4 == "MOTORCYCLE" |
+                                    data$VEHICLE.TYPE.CODE.5 == "Bike" | data$VEHICLE.TYPE.CODE.5 == "Motorcycle" |  data$VEHICLE.TYPE.CODE.5 == "MOTORCYCLE" )
+
+
+sedan_injury_probablity <- length(which(combined_sedans_all$NUMBER.OF.PERSONS.INJURED > 0 |
+    combined_sedans_all$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    combined_sedans_all$NUMBER.OF.CYCLIST.INJURED > 0 |
+    combined_sedans_all$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(combined_sedans_all)
+
+
+SUV_injury_probablity <- length(which(combined_SUVs_all$NUMBER.OF.PERSONS.INJURED > 0 |
+    combined_SUVs_all$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    combined_SUVs_all$NUMBER.OF.CYCLIST.INJURED > 0 |
+    combined_SUVs_all$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(combined_SUVs_all)
+
+
+
+taxis_injury_probability <- length(which(combined_taxis_all$NUMBER.OF.PERSONS.INJURED > 0 |
+    combined_taxis_all$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    combined_taxis_all$NUMBER.OF.CYCLIST.INJURED > 0  |
+    combined_taxis_all$NUMBER.OF.MOTORIST.INJURED > 0 )) / nrow(combined_taxis_all)
+
+
+
+trucks_injury_probability <- length(which(combined_trucks_all$NUMBER.OF.PERSONS.INJURED > 0 |
+    combined_trucks_all$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    combined_trucks_all$NUMBER.OF.CYCLIST.INJURED > 0 |
+    combined_trucks_all$NUMBER.OF.MOTORIST.INJURED > 0 )) / nrow(combined_trucks_all)
+
+
+bikes_injury_probability <- length(which(combined_bikes_all$NUMBER.OF.PERSONS.INJURED > 0 |
+    combined_bikes_all$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+   combined_bikes_all$NUMBER.OF.CYCLIST.INJURED > 0 |
+    combined_bikes_all$NUMBER.OF.MOTORIST.INJURED > 0 )) / nrow(combined_bikes_all)
+
+
+injury_probability <- c(sedan_injury_probablity, SUV_injury_probablity, 
+                        taxis_injury_probability, trucks_injury_probability, 
+                        bikes_injury_probability)
+
+
+
+sedan_fatality_probability <- length(which(combined_sedans_all$NUMBER.OF.PERSONS.KILLED > 0 | combined_sedans_all$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    combined_sedans_all$NUMBER.OF.CYCLIST.KILLED > 0 | combined_sedans_all$NUMBER.OF.MOTORIST.KILLED> 0)) / nrow(combined_sedans_all)
+
+SUV_fatality_probablity <- length(which(combined_SUVs_all$NUMBER.OF.PERSONS.KILLED > 0 |combined_SUVs_all$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    combined_SUVs_all$NUMBER.OF.CYCLIST.KILLED > 0 | combined_SUVs_all$NUMBER.OF.MOTORIST.KILLED> 0)) / nrow(combined_SUVs_all)
+
+taxis_fatality_probability <- length(which(combined_taxis_all$NUMBER.OF.PERSONS.KILLED > 0 | combined_taxis_all$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+  combined_taxis_all$NUMBER.OF.CYCLIST.KILLED > 0 | combined_taxis_all$NUMBER.OF.MOTORIST.KILLED> 0)) / nrow(combined_taxis_all)
+
+trucks_fatality_probability <- length(which(combined_trucks_all$NUMBER.OF.PERSONS.KILLED > 0 |combined_trucks_all$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+   combined_trucks_all$NUMBER.OF.CYCLIST.KILLED > 0 | combined_trucks_all$NUMBER.OF.MOTORIST.KILLED> 0)) / nrow(combined_trucks_all)
+
+
+bikes_fatality_probability <- length(which(combined_bikes_all$NUMBER.OF.PERSONS.KILLED > 0 |combined_bikes_all$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    combined_bikes_all$NUMBER.OF.CYCLIST.KILLED > 0 |  combined_bikes_all$NUMBER.OF.MOTORIST.KILLED> 0)) / nrow(combined_bikes_all)
+
+
+fatality_probability <- c(sedan_fatality_probability,
+                          SUV_fatality_probablity, 
+                          taxis_fatality_probability, 
+                          trucks_fatality_probability, 
+                          bikes_fatality_probability)
+
+dat <- rbind(injury_probability, fatality_probability)
+colnames(dat) <- c("sedan", "SUVs", "taxis", "trucks", "bikes")
+
+barplot(as.matrix(dat), col = c("green", "red"), main = "Vehicle Injury/Fatality Probability")
+legend("topleft", c("Injury Probability", "Fatality Percentage"), fill = c("green", "red"))
+
+
+
+
+
+
+```
+\
+\
+\newpage
+
+## Vehicle Distribution in Two Vehcile Collisions
+Since, two vehicle collisions appeared most frequently, we analyzed further on the distribution of vehicles that are involved in two vehicle crashes specifically. Similar to the overall distribution of vehicles, SEDANs and SUVS dominate the total amount. 
+
+
+```{r, echo = FALSE, eval = TRUE, fig.height=6}
+##Analyzing Two Vehicle Collisions 
+sedans_and_sedans <- subset(data, 
+                          ((data$VEHICLE.TYPE.CODE.1 == "Sedan" | data$VEHICLE.TYPE.CODE.1 == "4 dr sedan") & 
+                          (data$VEHICLE.TYPE.CODE.2 == "Sedan" | data$VEHICLE.TYPE.CODE.2 == "4 dr sedan")) |
+                          ((data$VEHICLE.TYPE.CODE.2 == "Sedan" | data$VEHICLE.TYPE.CODE.2 == "4 dr sedan") & 
+                          (data$VEHICLE.TYPE.CODE.1 == "Sedan" | data$VEHICLE.TYPE.CODE.1 == "4 dr sedan")))
+
+sedans_and_SUVs  <- subset(data, 
+                          ((data$VEHICLE.TYPE.CODE.1 == "Sedan" | data$VEHICLE.TYPE.CODE.1 == "4 dr sedan") & 
+                          (data$VEHICLE.TYPE.CODE.2 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.2 == "SPORT UTILITY / STATION WAGON")) |
+                          ((data$VEHICLE.TYPE.CODE.2 == "Sedan" | data$VEHICLE.TYPE.CODE.2 == "4 dr sedan") & 
+                          (data$VEHICLE.TYPE.CODE.1 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.1 == "SPORT UTILITY / STATION WAGON")))
+sedans_and_taxis  <- subset(data, 
+                          ((data$VEHICLE.TYPE.CODE.1 == "Sedan" | data$VEHICLE.TYPE.CODE.1 == "4 dr sedan") & 
+                          (data$VEHICLE.TYPE.CODE.2 == "TAXI" | data$VEHICLE.TYPE.CODE.2 == "Taxi")) |
+                          ((data$VEHICLE.TYPE.CODE.1 == "TAXI" | data$VEHICLE.TYPE.CODE.1 == "Taxi") & 
+                          (data$VEHICLE.TYPE.CODE.2 == "Sedan" | data$VEHICLE.TYPE.CODE.2 == "4 dr sedan")))
+
+sedans_and_trucks <- subset(data,
+                           ((data$VEHICLE.TYPE.CODE.1 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.1 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.1 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Pick-up Truck") & (data$VEHICLE.TYPE.CODE.2 == "Sedan" | data$VEHICLE.TYPE.CODE.2 == "4 dr sedan")) |
+                           ((data$VEHICLE.TYPE.CODE.2 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.2 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.2 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Pick-up Truck") & (data$VEHICLE.TYPE.CODE.1 == "Sedan" | data$VEHICLE.TYPE.CODE.1 == "4 dr sedan")))
+
+sedans_and_bikes <- subset(data, 
+                           ((data$VEHICLE.TYPE.CODE.1 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "MOTORCYCLE") & (data$VEHICLE.TYPE.CODE.2 == "Sedan" | data$VEHICLE.TYPE.CODE.2 == "4 dr sedan")) |
+                           ((data$VEHICLE.TYPE.CODE.2 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "MOTORCYCLE") & (data$VEHICLE.TYPE.CODE.1 == "Sedan" | data$VEHICLE.TYPE.CODE.1 == "4 dr sedan")))
+
+SUVs_and_SUVs <- subset(data, 
+                          ((data$VEHICLE.TYPE.CODE.1 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.1 == "SPORT UTILITY / STATION WAGON") & 
+                          (data$VEHICLE.TYPE.CODE.2 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.2 == "SPORT UTILITY / STATION WAGON")) |
+                          ((data$VEHICLE.TYPE.CODE.2 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.2 == "SPORT UTILITY / STATION WAGON") & 
+                          (data$VEHICLE.TYPE.CODE.1 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.1 == "SPORT UTILITY / STATION WAGON")))
+
+
+SUVs_and_taxis <- subset(data, 
+                          ((data$VEHICLE.TYPE.CODE.1 == "TAXI" | data$VEHICLE.TYPE.CODE.1 == "Taxi") & 
+                          (data$VEHICLE.TYPE.CODE.2 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.2 == "SPORT UTILITY / STATION WAGON")) |
+                          ((data$VEHICLE.TYPE.CODE.2 == "TAXI" | data$VEHICLE.TYPE.CODE.2 == "Taxi") & 
+                          (data$VEHICLE.TYPE.CODE.1 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.1 == "SPORT UTILITY / STATION WAGON")))
+
+SUVs_and_trucks <-subset(data, 
+                          ((data$VEHICLE.TYPE.CODE.1 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.1 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.1 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Pick-up Truck") & (data$VEHICLE.TYPE.CODE.2 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.2 == "SPORT UTILITY / STATION WAGON")) |
+                           ((data$VEHICLE.TYPE.CODE.2 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.2 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.2 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Pick-up Truck") & (data$VEHICLE.TYPE.CODE.1 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.1 == "SPORT UTILITY / STATION WAGON")))
+
+
+SUVs_and_bikes <-subset(data, 
+                         ((data$VEHICLE.TYPE.CODE.1 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "MOTORCYCLE") & (data$VEHICLE.TYPE.CODE.2 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.2 == "SPORT UTILITY / STATION WAGON")) |
+                         ((data$VEHICLE.TYPE.CODE.2 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "MOTORCYCLE") & (data$VEHICLE.TYPE.CODE.1 == "Station Wagon/Sport Utility Vehicle" | data$VEHICLE.TYPE.CODE.1 == "SPORT UTILITY / STATION WAGON")))
+taxis_and_taxis <- subset(data, 
+                          ((data$VEHICLE.TYPE.CODE.1 == "TAXI" | data$VEHICLE.TYPE.CODE.1 == "Taxi") & 
+                          (data$VEHICLE.TYPE.CODE.2 == "TAXI" | data$VEHICLE.TYPE.CODE.2 == "Taxi")) |
+                          ((data$VEHICLE.TYPE.CODE.2 == "TAXI" | data$VEHICLE.TYPE.CODE.2 == "Taxi") & 
+                          (data$VEHICLE.TYPE.CODE.1 == "TAXI" | data$VEHICLE.TYPE.CODE.1 == "Taxi")))
+
+
+taxis_and_trucks <-subset(data, 
+                          ((data$VEHICLE.TYPE.CODE.1 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.1 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.1 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Pick-up Truck") & (data$VEHICLE.TYPE.CODE.2 == "TAXI" | data$VEHICLE.TYPE.CODE.2 == "Taxi")) | 
+                          ((data$VEHICLE.TYPE.CODE.2 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.2 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.2 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Pick-up Truck") & (data$VEHICLE.TYPE.CODE.1 == "TAXI" | data$VEHICLE.TYPE.CODE.1 == "Taxi")))
+
+
+taxis_and_bikes <-subset(data, 
+                          ((data$VEHICLE.TYPE.CODE.1 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "MOTORCYCLE")  & (data$VEHICLE.TYPE.CODE.2 == "TAXI" | data$VEHICLE.TYPE.CODE.2 == "Taxi")) | 
+                          ((data$VEHICLE.TYPE.CODE.2 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "MOTORCYCLE")  & (data$VEHICLE.TYPE.CODE.1 == "TAXI" | data$VEHICLE.TYPE.CODE.1 == "Taxi")))
+trucks_and_trucks <-subset(data, 
+                          ((data$VEHICLE.TYPE.CODE.1 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.1 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.1 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Pick-up Truck") & (data$VEHICLE.TYPE.CODE.2 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.2 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.2 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Pick-up Truck")) | 
+                          ((data$VEHICLE.TYPE.CODE.2 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.2 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.2 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Pick-up Truck") & 
+                                 (data$VEHICLE.TYPE.CODE.1 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.1 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.1 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Pick-up Truck")))
+
+
+trucks_and_bikes <-subset(data,
+                         ((data$VEHICLE.TYPE.CODE.1 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.1 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.1 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Pick-up Truck") & 
+                                 (data$VEHICLE.TYPE.CODE.2 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "MOTORCYCLE")) |
+                          ((data$VEHICLE.TYPE.CODE.2 == "Bus" |
+                                 data$VEHICLE.TYPE.CODE.2 == "BUS" |
+                                 data$VEHICLE.TYPE.CODE.2 == "PICK-UP TRUCK" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "Box Truck" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Pick-up Truck") & 
+                                 (data$VEHICLE.TYPE.CODE.1 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "MOTORCYCLE")))
+bikes_and_bikes <-subset(data,
+                         ((data$VEHICLE.TYPE.CODE.2 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "MOTORCYCLE") &
+                           (data$VEHICLE.TYPE.CODE.1 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "MOTORCYCLE")) |
+                         ((data$VEHICLE.TYPE.CODE.1 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.1 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.1 == "MOTORCYCLE") &
+                          (data$VEHICLE.TYPE.CODE.2 == "Bike" |
+                                 data$VEHICLE.TYPE.CODE.2 == "Motorcycle" | 
+                                 data$VEHICLE.TYPE.CODE.2 == "MOTORCYCLE")))
+                           
+
+number_of_crashes <- c(nrow(sedans_and_SUVs), nrow(sedans_and_taxis), nrow(sedans_and_trucks), nrow(sedans_and_bikes), nrow(sedans_and_sedans),
+                       nrow(SUVs_and_taxis), nrow(SUVs_and_trucks), nrow(SUVs_and_bikes), nrow(SUVs_and_SUVs), 
+                       nrow(taxis_and_trucks), nrow(taxis_and_bikes), nrow(taxis_and_taxis), nrow(trucks_and_bikes), nrow(trucks_and_trucks), nrow(bikes_and_bikes))
+crash_type <- c("sedans and SUVs", "sedans and taxis", "sedans and trucks", "sedans and bikes", "sedans and sedans", 
+                                                         "SUVs and taxis", "SUVs and trucks", "SUVs and bikes", "SUVs and SUVs", "taxis and trucks", "taxis and bikes", 
+                                                         "taxis and taxis", "trucks and bikes", "trucks and trucks",  "bikes and bikes")
+dat2 <- data.frame(t(rbind(as.numeric(number_of_crashes), crash_type)))
+colnames(dat2) <- c("number_of_crashes", "crash_type")
+
+dat2$number_of_crashes <- as.numeric(dat2$number_of_crashes)
+
+  
+ggplot(data=dat2, aes(x=crash_type, y=number_of_crashes, fill=crash_type))+
+  geom_bar(stat="identity") +
+  theme(strip.text.x = element_text(size = 14),
+        axis.text.x = element_text(size = 14, angle = 90, hjust = 1),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 17),
+        axis.title.y = element_text(size = 17),
+        plot.title = element_text(size = 17)) + 
+  labs(x = "Crash Type", y = "Amount of Crashes") + 
+  ggtitle ("Amount of Crashes for each 2 Vehicle Crash Type")
+
+
+
+
+
+
+```
+\newpage
+
+## Two Vehicle Collision Injury Rate + Mortality Rate
+In order to further analyze the effects of two vehicle collisions, we analyzed the injury rate and the mortality rate by adding them together. This is because the mortality rate was very low in the previous graph, so it is practically not significant. Crashes with motorcycles still remain with the highest injury and fatality rate.
+
+
+```{r, echo = FALSE, eval = TRUE, fig.height=6}
+
+
+sedan_SUV_injury_probability <- length(which(sedans_and_SUVs$NUMBER.OF.PERSONS.INJURED > 0 |
+    sedans_and_SUVs$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    sedans_and_SUVs$NUMBER.OF.CYCLIST.INJURED > 0 |
+    sedans_and_SUVs$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(sedans_and_SUVs)
+
+sedan_taxi_injury_probability <- length(which(sedans_and_taxis$NUMBER.OF.PERSONS.INJURED > 0 |
+    sedans_and_taxis$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    sedans_and_taxis$NUMBER.OF.CYCLIST.INJURED > 0 |
+    sedans_and_taxis$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(sedans_and_taxis)
+
+sedan_truck_injury_probability <- length(which(sedans_and_trucks$NUMBER.OF.PERSONS.INJURED > 0 |
+    sedans_and_trucks$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    sedans_and_trucks$NUMBER.OF.CYCLIST.INJURED > 0 |
+    sedans_and_trucks$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(sedans_and_trucks)
+
+sedan_bike_injury_probability <- length(which(sedans_and_bikes$NUMBER.OF.PERSONS.INJURED > 0 |
+    sedans_and_bikes$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    sedans_and_bikes$NUMBER.OF.CYCLIST.INJURED > 0 |
+    sedans_and_bikes$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(sedans_and_bikes)
+  
+sedan_sedan_injury_probability <- length(which(sedans_and_sedans$NUMBER.OF.PERSONS.INJURED > 0 |
+    sedans_and_sedans$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    sedans_and_sedans$NUMBER.OF.CYCLIST.INJURED > 0 |
+    sedans_and_sedans$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(sedans_and_sedans)
+    
+SUV_taxi_injury_probability <- length(which(SUVs_and_taxis$NUMBER.OF.PERSONS.INJURED > 0 |
+    SUVs_and_taxis$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    SUVs_and_taxis$NUMBER.OF.CYCLIST.INJURED > 0 |
+    SUVs_and_taxis$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(SUVs_and_taxis)
+    
+SUV_truck_injury_probability <- length(which(SUVs_and_trucks$NUMBER.OF.PERSONS.INJURED > 0 |
+    SUVs_and_trucks$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    SUVs_and_trucks$NUMBER.OF.CYCLIST.INJURED > 0 |
+    SUVs_and_trucks$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(SUVs_and_trucks)
+    
+SUV_bike_injury_probability <- length(which(SUVs_and_bikes$NUMBER.OF.PERSONS.INJURED > 0 |
+    SUVs_and_bikes$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    SUVs_and_bikes$NUMBER.OF.CYCLIST.INJURED > 0 |
+    SUVs_and_bikes$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(SUVs_and_bikes)
+
+SUV_SUV_injury_probability <- length(which(SUVs_and_SUVs$NUMBER.OF.PERSONS.INJURED > 0 |
+    SUVs_and_SUVs$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    SUVs_and_SUVs$NUMBER.OF.CYCLIST.INJURED > 0 |
+    SUVs_and_SUVs$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(SUVs_and_SUVs)
+
+taxi_truck_injury_probability <- length(which(taxis_and_trucks$NUMBER.OF.PERSONS.INJURED > 0 |
+    taxis_and_trucks$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    taxis_and_trucks$NUMBER.OF.CYCLIST.INJURED > 0 |
+    taxis_and_trucks$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(SUVs_and_trucks)
+
+taxi_bike_injury_probability <- length(which(taxis_and_bikes$NUMBER.OF.PERSONS.INJURED > 0 |
+    taxis_and_bikes$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    taxis_and_bikes$NUMBER.OF.CYCLIST.INJURED > 0 |
+    taxis_and_bikes$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(SUVs_and_bikes)
+    
+taxi_taxi_injury_probability <- length(which(taxis_and_taxis$NUMBER.OF.PERSONS.INJURED > 0 |
+    taxis_and_taxis$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    taxis_and_taxis$NUMBER.OF.CYCLIST.INJURED > 0 |
+    taxis_and_taxis$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(SUVs_and_taxis)
+
+truck_bike_injury_probability <- length(which(trucks_and_bikes$NUMBER.OF.PERSONS.INJURED > 0 |
+    trucks_and_bikes$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    trucks_and_bikes$NUMBER.OF.CYCLIST.INJURED > 0 |
+    trucks_and_bikes$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(trucks_and_bikes)
+
+truck_truck_injury_probability <- length(which(trucks_and_trucks$NUMBER.OF.PERSONS.INJURED > 0 |
+    trucks_and_trucks$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    trucks_and_trucks$NUMBER.OF.CYCLIST.INJURED > 0 |
+    trucks_and_trucks$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(trucks_and_trucks)
+    
+bike_bike_injury_probability <- length(which(bikes_and_bikes$NUMBER.OF.PERSONS.INJURED > 0 |
+    bikes_and_bikes$NUMBER.OF.PEDESTRIANS.INJURED > 0 |
+    bikes_and_bikes$NUMBER.OF.CYCLIST.INJURED > 0 |
+    bikes_and_bikes$NUMBER.OF.MOTORIST.INJURED > 0)) / nrow(bikes_and_bikes)
+  
+  
+  
+  
+  
+  
+
+sedan_SUV_fatality_probability <- length(which(sedans_and_SUVs$NUMBER.OF.PERSONS.KILLED > 0 |
+    sedans_and_SUVs$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    sedans_and_SUVs$NUMBER.OF.CYCLIST.KILLED > 0 |
+    sedans_and_SUVs$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(sedans_and_SUVs)
+
+sedan_taxi_fatality_probability <- length(which(sedans_and_taxis$NUMBER.OF.PERSONS.KILLED > 0 |
+    sedans_and_taxis$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    sedans_and_taxis$NUMBER.OF.CYCLIST.KILLED > 0 |
+    sedans_and_taxis$NUMBER.OF.MOTORIST.KILLED> 0)) / nrow(sedans_and_taxis)
+
+sedan_truck_fatality_probability <- length(which(sedans_and_trucks$NUMBER.OF.PERSONS.KILLED > 0 |
+    sedans_and_trucks$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    sedans_and_trucks$NUMBER.OF.CYCLIST.KILLED > 0 |
+    sedans_and_trucks$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(sedans_and_trucks)
+
+sedan_bike_fatality_probability <- length(which(sedans_and_bikes$NUMBER.OF.PERSONS.KILLED > 0 |
+    sedans_and_bikes$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    sedans_and_bikes$NUMBER.OF.CYCLIST.KILLED > 0 |
+    sedans_and_bikes$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(sedans_and_bikes)
+  
+sedan_sedan_fatality_probability <- length(which(sedans_and_sedans$NUMBER.OF.PERSONS.KILLED > 0 |
+    sedans_and_sedans$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    sedans_and_sedans$NUMBER.OF.CYCLIST.KILLED > 0 |
+    sedans_and_sedans$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(sedans_and_sedans)
+    
+SUV_taxi_fatality_probability <- length(which(SUVs_and_taxis$NUMBER.OF.PERSONS.KILLED > 0 |
+    SUVs_and_taxis$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    SUVs_and_taxis$NUMBER.OF.CYCLIST.KILLED > 0 |
+    SUVs_and_taxis$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(SUVs_and_taxis)
+    
+SUV_truck_fatality_probability <- length(which(SUVs_and_trucks$NUMBER.OF.PERSONS.KILLED > 0 |
+    SUVs_and_trucks$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    SUVs_and_trucks$NUMBER.OF.CYCLIST.KILLED > 0 |
+    SUVs_and_trucks$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(SUVs_and_trucks)
+    
+SUV_bike_fatality_probability <- length(which(SUVs_and_bikes$NUMBER.OF.PERSONS.KILLED > 0 |
+    SUVs_and_bikes$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    SUVs_and_bikes$NUMBER.OF.CYCLIST.KILLED > 0 |
+    SUVs_and_bikes$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(SUVs_and_bikes)
+
+SUV_SUV_fatality_probability <- length(which(SUVs_and_SUVs$NUMBER.OF.PERSONS.KILLED > 0 |
+    SUVs_and_SUVs$NUMBER.OF.PEDESTRIANS.KILLED> 0 |
+    SUVs_and_SUVs$NUMBER.OF.CYCLIST.KILLED > 0 |
+    SUVs_and_SUVs$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(SUVs_and_SUVs)
+
+taxi_truck_fatality_probability <- length(which(taxis_and_trucks$NUMBER.OF.PERSONS.KILLED > 0 |
+    taxis_and_trucks$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    taxis_and_trucks$NUMBER.OF.CYCLIST.KILLED > 0 |
+    taxis_and_trucks$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(SUVs_and_trucks)
+
+taxi_bike_fatality_probability <- length(which(taxis_and_bikes$NUMBER.OF.PERSONS.KILLED> 0 |
+    taxis_and_bikes$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    taxis_and_bikes$NUMBER.OF.CYCLIST.KILLED > 0 |
+    taxis_and_bikes$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(SUVs_and_bikes)
+    
+taxi_taxi_fatality_probability <- length(which(taxis_and_taxis$NUMBER.OF.PERSONS.KILLED > 0 |
+    taxis_and_taxis$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    taxis_and_taxis$NUMBER.OF.CYCLIST.KILLED > 0 |
+    taxis_and_taxis$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(SUVs_and_taxis)
+
+truck_bike_fatality_probability <- length(which(trucks_and_bikes$NUMBER.OF.PERSONS.KILLED > 0 |
+    trucks_and_bikes$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    trucks_and_bikes$NUMBER.OF.CYCLIST.KILLED > 0 |
+    trucks_and_bikes$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(trucks_and_bikes)
+
+truck_truck_fatality_probability <- length(which(trucks_and_trucks$NUMBER.OF.PERSONS.KILLED > 0 |
+    trucks_and_trucks$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    trucks_and_trucks$NUMBER.OF.CYCLIST.KILLED > 0 |
+    trucks_and_trucks$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(trucks_and_trucks)
+    
+bike_bike_fatality_probability <- length(which(bikes_and_bikes$NUMBER.OF.PERSONS.KILLED > 0 |
+    bikes_and_bikes$NUMBER.OF.PEDESTRIANS.KILLED > 0 |
+    bikes_and_bikes$NUMBER.OF.CYCLIST.KILLED > 0 |
+    bikes_and_bikes$NUMBER.OF.MOTORIST.KILLED > 0)) / nrow(bikes_and_bikes)
+
+
+
+
+
+
+two_vehicle_crash_injury_probability <- c(sedan_SUV_injury_probability, sedan_taxi_injury_probability, sedan_truck_injury_probability, sedan_bike_injury_probability, sedan_sedan_injury_probability,
+                                          SUV_taxi_injury_probability, SUV_truck_injury_probability, SUV_bike_injury_probability, SUV_SUV_injury_probability,
+                                          taxi_truck_injury_probability,taxi_bike_injury_probability, taxi_taxi_injury_probability,
+                                          truck_bike_injury_probability, truck_truck_injury_probability, 
+                                          truck_truck_injury_probability)
+                                          
+two_vehicle_crash_fatality_probability <- c(sedan_SUV_fatality_probability, sedan_taxi_fatality_probability, sedan_truck_fatality_probability, sedan_bike_fatality_probability, sedan_sedan_fatality_probability,
+                                          SUV_taxi_fatality_probability, SUV_truck_fatality_probability, SUV_bike_fatality_probability, SUV_SUV_fatality_probability,
+                                          taxi_truck_fatality_probability,taxi_bike_fatality_probability, taxi_taxi_fatality_probability,
+                                          truck_bike_fatality_probability, truck_truck_fatality_probability, 
+                                          truck_truck_fatality_probability)
+                                          
+
+
+crash_type <- c("sedans and SUVs", "sedans and taxis", "sedans and trucks", "sedans and bikes", "sedans and sedans", 
+                                                         "SUVs and taxis", "SUVs and trucks", "SUVs and bikes", "SUVs and SUVs", "taxis and trucks", "taxis and bikes", 
+                                                         "taxis and taxis", "trucks and bikes", "trucks and trucks", "bikes and bikes")
+                                                         
+two_vehicle_injured_and_fatality_probability <- round(two_vehicle_crash_injury_probability +  two_vehicle_crash_fatality_probability, 4)                                                       
+                                                        
+dat3 <- data.frame(cbind(crash_type,two_vehicle_injured_and_fatality_probability))
+
+
+dat3$two_vehicle_injured_and_fatality_probability <- as.numeric(dat3$two_vehicle_injured_and_fatality_probability)
+  
+ggplot(data=dat3, aes(x=crash_type, y=two_vehicle_injured_and_fatality_probability,  fill=crash_type))+
+  geom_bar(stat="identity") +
+  theme(strip.text.x = element_text(size = 12),
+        axis.text.x = element_text(size = 12, angle = 90, hjust = 1),
+        axis.text.y = element_text(size = 12),
+        axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        plot.title = element_text(size = 13)) + 
+  labs(x = "Crash Type", y = "Amount of Crashes") + 
+  ggtitle ("Combined fatality and injury probability for each 2 Vehicle Crash Type") + ylim(0, 1)
+
+
+
+
+```
+
+### Final word on the type of vehicles.
+This data set did not provide anything extraordinary or completely surprising. However, it did not further consolidate the idea that SUVs and Sedans will have the most crashes but with a medium fatality + injury rate while bikes and motorcycles would be the opposite. 
+
+
+
+
+
+
+# Regression Analysis and Killer Plot
+
+## Motivation and Variables for Regression
+As discussed in previous sections, analysis of our data corroborates past studies
+in that it suggests the existence of correlations between variables in our data 
+and the probability of getting injured or killed during a car crash. We are 
+interested in validating if these correlations are potentially casual, and if so,
+what insights they can give to enhance safety in the street.  
+
+We will be focusing on "Injury and Fatality" as our response variable. 
+This variable is a binomial variable that holds the value 0 if there are no
+person injured or killed, or the value 1 if there's at least one person injured
+or killed, as a result of a car crash. For the predictor variable, we will be 
+investigating "Vehicle Types" and "Crash Factor/Reason", which are both 
+categorical variables provided in our main dataset. 
+
+## Model in Use
+For our regression analysis, we used a binomial logistic regression model in 
+which the log odds are of a generalized linear regression form. The major reason
+we picked this variable is because our response variable is binomial. We can 
+observe no multicollinearity in our predictor variables because both "Vehicle 
+Types" and "Crash Factor/Reason" are categorical. There also aren't any
+autocorrelation because of the nature of car crashes. For this model, we are 
+also assuming linearity of our predictor variables and log odds
+
+## Logistic Regression Model Explained
+Before we delve into our regression process, let us first look at the structure
+of the logistic regression function. Using "Injury and Fatality" as $Y$ and 
+"Vehicle Types" or "Crash Factor/Reason" as $X$, we have the following function
+for explaining $Y$ using $X$, where $x_1 ... x_n$ are individual cases for the
+categorical variable $X$.
+$$
+Y = e^{a + BX} \rightarrow log(Y) = a + BX = \beta_0 + \beta_1x_1 + ... + \beta_nx_n
+$$
+Given this expression, we deduct the value of $Y$, or the probability of at least
+one injury or death occurring, to be:
+$$
+p  = \frac{1}{1 + e^{-logit(p)}}
+$$
+where the logistic function is given by:
+$$
+logit(p) = \beta_0 + \beta_1x_1 + ... + \beta_nx_n
+$$
+
+## Regression Analysis on Vehicle Type
+```{r}
+res <- dbSendQuery(conn = dcon, "
+SELECT CRASHDATE, CRASHTIME, VEHICLETYPECODE1, NUMBEROFPERSONSINJURED, NUMBEROFPERSONSKILLED,
+       CASE WHEN (NUMBEROFPERSONSINJURED + 
+       NUMBEROFPERSONSKILLED) > 0 THEN 
+         1 
+       ELSE 
+         0
+       END as 'INJURED.KILLED'
+FROM mvc
+")
+vehicle_type <- dbFetch(res, -1)
+dbClearResult(res)
+
+vehicle_type$VEHICLETYPE <- ""
+vehicle_type <- within(vehicle_type, 
+                       VEHICLETYPE[VEHICLETYPECODE1 == "Sedan" | 
+                                     VEHICLETYPECODE1 == "4 dr sedan"] 
+                       <- 'com_sedan') 
+vehicle_type <- within(vehicle_type, 
+                       VEHICLETYPE[VEHICLETYPECODE1 == "Station Wagon/Sport Utility Vehicle" | 
+                                     VEHICLETYPECODE1 == "SPORT UTILITY / STATION WAGON"] 
+                       <- 'com_suv')
+vehicle_type <- within(vehicle_type, 
+                       VEHICLETYPE[VEHICLETYPECODE1 == "TAXI" | 
+                                     VEHICLETYPECODE1 == "Taxi"] 
+                       <- 'com_taxi')
+vehicle_type <- within(vehicle_type, 
+                       VEHICLETYPE[VEHICLETYPECODE1 == "Bus" | 
+                                 VEHICLETYPECODE1 == "BUS" |
+                                 VEHICLETYPECODE1 == "PICK-UP TRUCK" | 
+                                 VEHICLETYPECODE1 == "Box Truck" |
+                                 VEHICLETYPECODE1 == "Pick-up Truck" |
+                                 VEHICLETYPECODE1 == "LARGE COM VEH(6 OR MORE TIRES)"] 
+                       <- 'bus_truck')
+vehicle_type <- within(vehicle_type, 
+                       VEHICLETYPE[VEHICLETYPECODE1 == "Bike" |
+                                 VEHICLETYPECODE1 == "Motorcycle" |
+                                 VEHICLETYPECODE1 == "MOTORCYCLE"] 
+                       <- 'com_bikes')
+vehicle_type <- subset(vehicle_type, VEHICLETYPE != "")
+
+vehicle_type <- na.omit(vehicle_type)
+vehicle_type$YEAR <- gsub(".*/()", "\\2", vehicle_type$CRASHDATE)
+vehicle_type$CRASH.HOUR <- as.numeric(gsub("():.*", "", vehicle_type$CRASHTIME))
+
+type_func <- function(type){
+  type_result <- vehicle_type %>%
+    filter(VEHICLETYPE == type) %>%
+    group_by(CRASH.HOUR) %>%
+    arrange(CRASH.HOUR) %>%
+    relocate(CRASH.HOUR) %>%
+    summarise(
+      total = n(),
+      injury_death = sum(INJURED.KILLED > 0),
+      percentage = injury_death/total)
+  return(cbind(type, type_result))
+}
+result <- c();
+for (type in unique(vehicle_type$VEHICLETYPE)){
+  result <- rbind(result, type_func(type))
+}
+
+vehicle_type$VEHICLETYPE<- factor(vehicle_type$VEHICLETYPE)
+regression <- glm(INJURED.KILLED ~ VEHICLETYPE, data = vehicle_type, family = "binomial")
+sum_reg <- summary(regression)
+```
+
+The regression we did using vehicle type as the predictor variable has the
+following categories. Where the value "Buses, Trucks and other Large Vehicles" 
+is explained by the constant term. 
+```{r, fig.align = 'center'}
+df <- data.frame(Coefficients = c('', 'x_1', 'x_2', 'x_3', 'x_4'),
+                 Predictor = c('Bus, Trucks and other Large Vehicles', 
+                               'Bicycle and Motorcycles',
+                               'Sedans', 
+                               'Sport Utility Vehicles (SUVs)', 
+                               'Taxis'))
+knitr::kable(df, col.names = c("Predictor Variables", "Categories"))
+```
+We split the data into groups based on the hour the crash occurred and
+calculated the rate of injuries and fatalities for each hour. This gives us 
+enough data to perform our regression. The below is a graph that demonstrates
+the injury and fatality rates for each vehicle type according to time of day.
+We can observe that the injury and fatality probability of crashes involving
+a bicycle or motorcycle is highest throughout the day.
+```{r, fig.height = 3, fig.align = 'center'}
+ggplot(data = data.frame(result), aes(x = CRASH.HOUR, y = percentage, group = type)) +
+       geom_line(aes(color = type)) + 
+       geom_point(aes(color = type)) + 
+       labs(x = "Hour in which Crash Occurred", y = "Injury and Fatality Rates",
+            title = "Injury and Fatality Rates for Each Type of\n Predictor Variable over Time of Day",
+            colour = "Vehicle Type") + 
+  scale_color_discrete(
+    labels = c('Bus, Trucks and other Large Vehicles', 
+                               'Bicycle and Motorcycles',
+                               'Sedans', 
+                               'Sport Utility Vehicles (SUVs)', 
+                               'Taxis'))
+```
+
+
+
+## Regression Result for Vehicle Type:
+The result of the regression is given in the table below. We can see that the
+p value for all of the coefficients, including the constant term, exhibit 
+statistical significance, indicating casual relationships between vehicle type
+and injury and death.
+```{r}
+sum_reg$coefficients
+```
+We can thus deduce the resulting predictor function to be:
+$$
+p  = \frac{1}{1 + e^{- logit(p)}}
+$$
+where:
+$$
+logit(p) = - 1.764636 + 2.639851*x_1 + 0.521495*x_2 + 0.427000*x_3 + 0.566123*x_4
+$$
+The graph below demonstrates a comparison between the actual and predicted 
+overall probability of an injury or death occurring using the regression model
+we fitted above at each time of the day. As we can observe, though this model
+is far from being a perfect match due to the simplicity of its nature, it is 
+able to capture the general trend of injury and death probabilities falling 
+during the middle of the day and rising during night time. 
+```{r, fig.height = 3, fig.align = 'center'}
+result <- vehicle_type %>%
+  group_by(CRASH.HOUR) %>%
+  summarise(
+    total = n(),
+    expected = sum(INJURED.KILLED)/total,
+    calculated = sum(1/(1 + exp(-(-1.764636 +
+                                    2.639851*ifelse(VEHICLETYPE == 'com_bikes', 1, 0) + 
+                                    0.521495*ifelse(VEHICLETYPE == 'com_sedan', 1, 0) + 
+                                    0.427000*ifelse(VEHICLETYPE == 'com_suv', 1, 0) + 
+                                    0.566123*ifelse(VEHICLETYPE == 'com_taxi', 1, 0)
+                                  ))))/total
+    )
+
+result$CRASH.HOUR <- as.numeric(as.character(result$CRASH.HOUR))
+
+ggplot(data = result, aes(x = CRASH.HOUR)) + 
+  geom_point(aes(y = expected, color = "expected")) +
+  geom_line(aes(y = expected, color = "expected"), linetype = 2) + 
+  geom_point(aes(y = calculated, color = "calculated")) +
+  geom_line(aes(y = calculated, color = "calculated")) + 
+  labs(x = "Hour in which Crash Occurred", y = "Calculated vs. Actual Injury and Fatality Percentage",
+       title = "Calculated Probability vs. Actual Percentage of/n Injury and Fatality using Vehicle Type Model",
+       color = "Probability") 
+ 
+```
+
+## Regression Analysis on Factor of Crash {.smaller}
+
+```{r}
+res <- dbSendQuery(conn = dcon, "
+SELECT CRASHDATE, CRASHTIME, VEHICLETYPECODE1, CONTRIBUTINGFACTORVEHICLE1, NUMBEROFPERSONSINJURED, NUMBEROFPERSONSKILLED,
+       CASE WHEN (NUMBEROFPERSONSINJURED + 
+       NUMBEROFPERSONSKILLED) > 0 THEN 
+         1 
+       ELSE 
+         0
+       END as 'INJURED.KILLED'
+FROM mvc
+")
+crash_factor <- dbFetch(res, -1)
+dbClearResult(res)
+
+## ('Driver Inattention', 'Failure to Yield Right-of-Way', 'Improper Backing, Turning or Lane Change',
+## 'Driving Under Influence of Alchohol, Drugs or Medication', 'Speeding')
+
+
+crash_factor$CRASHFACTOR <- ""
+crash_factor <- within(crash_factor, 
+                       CRASHFACTOR[CONTRIBUTINGFACTORVEHICLE1 == "Driver Inattention/Distraction"] 
+                       <- 'Driver Inattention')
+crash_factor <- within(crash_factor, 
+                       CRASHFACTOR[CONTRIBUTINGFACTORVEHICLE1 == "Failure to Yield Right-of-Way"] 
+                       <- 'Failure to Yield')
+crash_factor <- within(crash_factor, 
+                       CRASHFACTOR[CONTRIBUTINGFACTORVEHICLE1 == "Backing Unsafely" |
+                                     CONTRIBUTINGFACTORVEHICLE1 == "Passing or Lane Usage Improper" |
+                                     CONTRIBUTINGFACTORVEHICLE1 == "Turning Improperly" |
+                                     CONTRIBUTINGFACTORVEHICLE1 == "Unsafe Lane Changing"] 
+                       <- 'Improper Maneuver')
+crash_factor <- within(crash_factor, 
+                       CRASHFACTOR[CONTRIBUTINGFACTORVEHICLE1 == "Prescription Medication" |
+                                     CONTRIBUTINGFACTORVEHICLE1 == "Alcohol Involvement" |
+                                     CONTRIBUTINGFACTORVEHICLE1 == "Drugs (illegal)" |
+                                     CONTRIBUTINGFACTORVEHICLE1 == "Drugs (Illegal)"] 
+                       <- 'DUI')
+crash_factor <- within(crash_factor, 
+                       CRASHFACTOR[CONTRIBUTINGFACTORVEHICLE1 == "Unsafe Speed"] 
+                       <- 'Speeding')
+crash_factor <- subset(crash_factor, CRASHFACTOR != "")
+
+crash_factor <- na.omit(crash_factor)
+crash_factor$YEAR <- gsub(".*/()", "\\2", crash_factor$CRASHDATE)
+crash_factor$CRASH.HOUR <- as.numeric(gsub("():.*", "", crash_factor$CRASHTIME))
+
+factor_func <- function(factor){
+  factor_result <- crash_factor %>%
+    filter(CRASHFACTOR == factor) %>%
+    group_by(CRASH.HOUR) %>%
+    arrange(CRASH.HOUR) %>%
+    relocate(CRASH.HOUR) %>%
+    summarise(
+      total = n(),
+      injury_death = sum(INJURED.KILLED > 0),
+      percentage = injury_death/total)
+  return(cbind(factor, factor_result))
+}
+result <- c();
+for (factor in unique(crash_factor$CRASHFACTOR)){
+  result <- rbind(result, factor_func(factor))
+}
+
+crash_factor$CRASHFACTOR <- factor(crash_factor$CRASHFACTOR)
+regression <- glm(INJURED.KILLED ~ CRASHFACTOR, data = crash_factor, family = "binomial")
+sum_reg <- summary(regression)
+```
+Similar to that above, the regression using vehicle type as the predictor variable 
+has the following categories. Where the value "Driver Inattention" is explained by 
+the constant term. 
+```{r, fig.align = 'center'}
+df <- data.frame(Coefficients = c('', 'x_1', 'x_2', 'x_3', 'x_4'),
+                 Predictor = c('Driver Inattention', 
+                               'Driving Under Influence (DUI) of Alchohol, Drugs or Medication',
+                               'Failure to Yield Right-of-Way', 
+                               'Improper Backing, Turning or Lane Change', 
+                               'Speeding'))
+knitr::kable(df, col.names = c("Predictor Variables", "Categories"))
+```
+We performed similar operations on the predictor variable "Factor of Crashes".
+The below is a graph that demonstrates the injury and fatality rates for each 
+vehicle type according to time of day. We can observe that the injury and 
+fatality probability of crashes involving "Failure to Yield Right of Way" and 
+"Speeding" are relatively higher; that of "Improper Backing, Turning or Lane 
+Change" is relatively low, partially explainable by the low speed of involved 
+vehicles at which these crashes occur.
+```{r, fig.height = 3, fig.align = 'center'}
+ggplot(data = data.frame(result), aes(x = CRASH.HOUR, y = percentage, group = factor)) +
+       geom_line(aes(color = factor)) + 
+       geom_point(aes(color = factor)) + 
+       labs(x = "Hour in which Crash Occurred", y = "Injury and Fatality Rates",
+            title = "Injury and Fatality Rates for Each Type of/n Predictor Variable over Time of Day",
+            colour = "Factor of Crash") + 
+  scale_color_discrete(
+    labels = c('Driver Inattention', 
+                               'Driving Under Influence (DUI) of Alchohol, Drugs or Medication',
+                               'Failure to Yield Right-of-Way', 
+                               'Improper Backing, Turning or Lane Change', 
+                               'Speeding'))
+```
+
+## Regression Result for Factor of Crash:
+The result of the regression is given in the table below. We can see that the
+p value for all of the coefficients, including the constant term, exhibit 
+statistical significance, indicating casual relationships between factor of crash
+and injury and death.
+```{r}
+sum_reg$coefficients
+```
+We can thus deduce the resulting predictor function to be:
+$$
+p  = \frac{1}{1 + e^{- logit(p)}}
+$$
+where:
+$$
+logit(p) = - 1.2208663 + 0.0721312*x_1 + 0.6825204*x_2 - 0.7687210*x_3 + 0.8121122*x_4
+$$
+We can see that for factor of crash, we can also identify a general trend of injury and death probabilities falling during the middle of the day and rising during night time using
+the fitted regression model. 
+```{r, fig.height = 3, fig.align = 'center'}
+result <- crash_factor %>%
+  group_by(CRASH.HOUR) %>%
+  summarise(
+    total = n(),
+    expected = sum(INJURED.KILLED)/total,
+    calculated = sum(1/(1 + exp(-(-1.2208663 +
+                                    0.0721312 *ifelse(CRASHFACTOR == 'DUI', 1, 0) + 
+                                    0.6825204 *ifelse(CRASHFACTOR == 'Failure to Yield', 1, 0) - 
+                                    0.7687210 *ifelse(CRASHFACTOR == 'Improper Maneuver', 1, 0) + 
+                                    0.8121122 *ifelse(CRASHFACTOR == 'Speeding', 1, 0)
+                                  ))))/total
+    )
+
+result$CRASH.HOUR <- as.numeric(as.character(result$CRASH.HOUR))
+
+ggplot(data = result, aes(x = CRASH.HOUR)) + 
+  geom_point(aes(y = expected, color = "expected")) +
+  geom_line(aes(y = expected, color = "expected"), linetype = 2) + 
+  geom_point(aes(y = calculated, color = "calculated")) +
+  geom_line(aes(y = calculated, color = "calculated")) + 
+  labs(x = "Hour in which Crash Occurred", y = "Calculated vs. Actual Injury and Fatality Percentage",
+       title = "Calculated Probability vs. Actual Percentage of/n Injury and Fatality using Crash Factor Model",
+       color = "Probability") 
+ 
+```
+
+## Killer Plot
+Resulting our analysis are realizations of the significance that external factors
+play in determining the outcome of a crash. We are thus prompted to design a 
+method for drivers to anticipate the potential injury and death probability of 
+crashes based on our data set so as to advise them to make wiser decisions. As
+such, we divised our killer plot displayed below.
+```{r, crash_factor, fig.height = 5, fig.width = 5, fig.align = 'center'}
+crash_factor$VEHICLETYPE <- ""
+crash_factor <- within(crash_factor, 
+                       VEHICLETYPE[VEHICLETYPECODE1 == "Sedan" | 
+                                     VEHICLETYPECODE1 == "4 dr sedan"] 
+                       <- 'com_sedan')
+crash_factor <- within(crash_factor, 
+                       VEHICLETYPE[VEHICLETYPECODE1 == "Station Wagon/Sport Utility Vehicle" | 
+                                     VEHICLETYPECODE1 == "SPORT UTILITY / STATION WAGON"] 
+                       <- 'com_suv')
+crash_factor <- within(crash_factor, 
+                       VEHICLETYPE[VEHICLETYPECODE1 == "TAXI" | 
+                                     VEHICLETYPECODE1 == "Taxi"] 
+                       <- 'com_taxi')
+crash_factor <- within(crash_factor, 
+                       VEHICLETYPE[VEHICLETYPECODE1 == "Bus" | 
+                                 VEHICLETYPECODE1 == "BUS" |
+                                 VEHICLETYPECODE1 == "PICK-UP TRUCK" | 
+                                 VEHICLETYPECODE1 == "Box Truck" |
+                                 VEHICLETYPECODE1 == "Pick-up Truck" |
+                                 VEHICLETYPECODE1 == "LARGE COM VEH(6 OR MORE TIRES)"] 
+                       <- 'bus_truck')
+crash_factor <- within(crash_factor, 
+                       VEHICLETYPE[VEHICLETYPECODE1 == "Bike" |
+                                 VEHICLETYPECODE1 == "Motorcycle" |
+                                 VEHICLETYPECODE1 == "MOTORCYCLE"] 
+                       <- 'com_bikes')
+crash_factor <- subset(crash_factor, VEHICLETYPE != "")
+
+# Define server logic required to draw a histogram
+    time <- 10
+    type <- 'com_bikes'
+    
+    prob_df <- crash_factor %>%
+      filter(CRASH.HOUR == time & VEHICLETYPE == type) %>%
+      group_by(CRASHFACTOR) %>%
+      summarise(
+        total = n(),
+        injury_death = sum(INJURED.KILLED > 0),
+        prob = injury_death/total)
+    
+    prob <- prob_df$prob
+  
+    grid.newpage()
+    offset <- 0.5
+    vp <- viewport(x = offset, y = offset)
+    x_coord <- c(0, sin(2*pi/5), sin(4*pi/5), -sin(4*pi/5), -sin(2*pi/5))
+    y_coord <- c(1, cos(2*pi/5), -cos(pi/5), -cos(pi/5), cos(2*pi/5))
+    x_coord <- x_coord/3 
+    y_coord <- y_coord/3
+    
+    n <- 100
+    for (i in 1:(n-1)){
+      grid.polygon(x = x_coord*((n-i)/n) + offset, y = y_coord*((n-i)/n) + offset,
+                 id=NULL, id.lengths=NULL,
+                 default.units="npc", name=NULL,
+                 gp=gpar(col = NA, fill = rgb(red = 1, green = i/n, blue = i/n, alpha = 0.05), draw=TRUE, vp=vp))
+    }
+      grid.polygon(x = x_coord + offset, y = y_coord + offset,
+                 id=NULL, id.lengths=NULL,
+                 default.units="npc", name=NULL,
+                 gp=gpar(col = "black", fill = NA, draw=TRUE, vp=vp))
+    
+    for (i in 1:5){
+      grid.polygon(x = c(x_coord[i] + offset, x_coord[ifelse(i+1>5, 1, i+1)] + offset, 
+                         x_coord[ifelse(i+1>5, 1, i+1)]*prob[ifelse(i+1>5, 1, i+1)] + offset,
+                         x_coord[i]*prob[i] + offset),
+                   y = c(y_coord[i] + offset, y_coord[ifelse(i+1>5, 1, i+1)] + offset, 
+                         y_coord[ifelse(i+1>5, 1, i+1)]*prob[ifelse(i+1>5, 1, i+1)] + offset,
+                         y_coord[i]*prob[i] + offset),
+                   gp=gpar(col = NA, fill = "white", alpha = 0.5))
+      grid.segments(x0 = x_coord[ifelse(i+1>5, 1, i+1)]*prob[ifelse(i+1>5, 1, i+1)] + offset, 
+                    y0 = y_coord[ifelse(i+1>5, 1, i+1)]*prob[ifelse(i+1>5, 1, i+1)] + offset, 
+                    x1 = x_coord[i]*prob[i] + offset,
+                    y1 = y_coord[i]*prob[i] + offset,
+                    gp=gpar(col= "black"))
+    }
+    
+    labels <- c('Driver Inattention', 'DUI', 'Failure to Yield', 'Improper Maneuver', 'Speeding')
+    percentage <- paste(round(prob, 3)*100, '%', sep = '')
+    
+    for(i in 1:5){
+      grid.circle(x = x_coord[i]*prob[i] + offset, y = y_coord[i]*prob[i] + offset, 
+                  r = 0.02, gp=gpar(col= "black", fill = NA))
+      grid.segments(x0 = offset, y0 = offset, x1 = x_coord[i] + offset, y1 = y_coord[i] + offset, 
+                    gp=gpar(col= "black", lty = 2, alpha = 0.3))
+      grid.text(labels[i], x = x_coord[i] + offset, y = y_coord[i] + offset,
+                hjust = ifelse(i==2, -0.5, ifelse(i==5, 1.1, 0.5)), 
+                vjust = ifelse(i==1, -1, ifelse(i==3|i==4, 1.5, 0)) )
+      grid.text(percentage[i], x = x_coord[i]*prob[i] + offset, y = y_coord[i]*prob[i] + offset,
+                hjust = ifelse(i==3|i==1, -0.2, ifelse(i==4, 1, 0.5)), 
+                vjust = ifelse(i==1, -1, ifelse(i==5|i==2, 2, ifelse(i==4, 0.5, 0))) )
+    }
+    grid.text("Killer Plot For Bike and Motorcycles at 10 O'clock", x = 0.5, y = 0.13)
+    
+```
+Our killer plot is pentagonal shaped, with each angle representing one potential
+factor of crash. With in the pentagon there's another irregular pentagon. The 
+distance between each vertex of the internal pentagon and its corresponding 
+external pentagon represents the probability of an injury or death occurring
+for this particular factor of crash. For this particular graph, we are using 
+the specific vehicle type "Bike and Motorcycles" and the time of day "10 O'clock".
+Thus, for example, we can infer from the graph that if you ride a bike or 
+motorcycle at 10 O'clock in New York and get crashed due to inattention, you have
+a 65.6% probability of getting injured or killed. Note that we are only displaying
+one specific case and we can change the vehicle type and time of day to meet
+the needs of the reader.
+Our plot provides a means for drivers to know in advance what to be ware of 
+before they hit the road. Continuing on our provided example, bike riders should
+certainly be cautious of speeding and failure of yielding right at 10 O'clock in 
+the morning as these both yield high percentages of injuries and fatalities if
+a crash occur. The credibility of this plot is given by the statistically 
+significant causal relationship we previously analyzes and the considerable size
+of our data set.
+
+
+# Limitations
+As highlighted in the **Context** section of this report, factors that determine which crashes are reported and which crashes lead to consequences for drivers complicate interpretation of the primary data set, but these factors also capture meaningful information about policing and driver behavior. While these factors may be useful for analyses combining them with other data, the New York City motor vehicle collisions data set has limitations caused both by these factors and lack of recorded data. One unambiguous limitation of the data set is the inconsistency in location variables. The columns include latitude, longitude, zip code, the street the crash in on, the street the crash is off, the cross street, coordinates, and the borough, but many observations only include data for a few of these location variables. Making the street and cross street of one collision compatible to compare with the borough or latitude and longitude of another would require several additional data sets and geographic coding. 
+
+Additionally, the primary data set includes five columns for contributing factors rather than having separate columns for each factor that could contribute. As a result, factors are only recorded if the reporting officer or a person involved in the crash identifies a factor as contributing. For example, if the identified cause of the crash was a car turning improperly, the report may not include information about the speed of the car or the weather conditions. 
+
+Included below are two plots illustrating the speed limits for the New York City streets with the highest numbers of traffic injuries and fatalities. These plots demonstrate that recorded data like speed limit does not capture the level of risk on a street: the streets with the highest number of injuries and fatalities are not those with high speed limits. In fact, the streets with the numbers of fatalities have relatively low speed limits, suggesting that further analysis may be necessary to determine if cars traveling at high speeds amongst traffic moving at low speeds may be a frequent cause of fatal accidents. Factors not included on these plots, like speeding, reckless driving, and the volume of traffic on these streets, contribute to injury and fatality numbers, and the speed limits do not represent the actual speeds of the cars involved in these collisions. These plots demonstrate the limitations of data that does not capture each crash-involved vehicle's speed or the traffic volume while also raising questions about what additional data besides Police Accident Report data is necessary to inform policy changes like reductions in speed limit.
+
+<style> 
+  #speedlimit1 > p { 
+    margin-top: +100px; 
+  } 
+</style>
+
+
+```{r, echo = FALSE, fig.align = 'center', fig.height=5}
+par(mar = c(8, 3, 1, 1) + 0.1)
+killsbarplot <- barplot(killhead_noNAs$killcount, 
+                        names.arg = c("Broadway", "Atlantic Avenue", "Third Avenue",
+                                      "Bruckner Boulevard", "Linden Boulevard",
+                                      "Belt Parkway", "Northern Boulevard",
+                                      "Rockaway Boulevard", "Hylan Boulevard",
+                                      "Major Deegan Expressway"),
+        las = 2, 
+        col = paste("#", 2*(as.integer(substr(killhead_noNAs$speedlimit, 1, 1)) - 2), 
+                    "C", substr(killhead_noNAs$speedlimit, 1, 1), 
+                    "C", substr(killhead_noNAs$speedlimit, 2, 2), 
+                    "C", sep = ""),   
+        ylim = c(0, max(killhead_noNAs$killcount + 5)),
+        main = "Highest Fatalities for Streets with Known Speed Limits",
+        ylab = "Number of Fatalities",
+        xlab = "Street")
+text(x = killsbarplot, y = killhead_noNAs$killcount + 2, 
+     labels = killhead_noNAs$speedlimit, col = "black")
+legend("topright", legend = unique(killhead_noNAs$speedlimit), 
+       fill = unique(paste("#", 2*(as.integer(substr(killhead_noNAs$speedlimit, 1, 1)) - 2), 
+                    "C", substr(killhead_noNAs$speedlimit, 1, 1), 
+                    "C", substr(killhead_noNAs$speedlimit, 2, 2), 
+                    "C", sep = "")))
+```
+
+
+## Speed Limit and Injuries
+```{r, echo = FALSE, fig.align = 'center', fig.height =5}
+par(mar = c(8, 3, 1, 1) + 0.1)
+injuriesbarplot <- barplot(injuryhead_noNAs$injurycount, names.arg = c("Belt Parkway", "Broadway", "Atlantic Avenue", "Linden Boulevard", 
+              "LongIsland Expressway", "Brookyn Queens Expressway", "Third Avenue",
+              "Northern Boulevard", "Flatbush Avenue", "FDR Drive"), las = 2, cex.names = .7,
+        col = paste("#", 2*(as.integer(substr(injuryhead_noNAs$speedlimit, 1, 1)) - 2), 
+                    "C", substr(injuryhead_noNAs$speedlimit, 1, 1), 
+                    "C", substr(injuryhead_noNAs$speedlimit, 2, 2), 
+                    "C", sep = ""), 
+        ylim = c(0, max(injuryhead_noNAs$injurycount + 1000)),
+        main = "Highest Injuries for Streets with Known Speed Limits",
+        ylab = "Number of Injuries",
+        xlab = "Street")
+text(x = injuriesbarplot, y = injuryhead_noNAs$injurycount + 300, 
+     labels = injuryhead_noNAs$speedlimit, col = "black")
+legend("topright", legend = unique(injuryhead_noNAs$speedlimit), 
+       fill = unique(paste("#", 2*(as.integer(substr(injuryhead_noNAs$speedlimit, 
+                                                     1, 1)) - 2), 
+                    "C", substr(injuryhead_noNAs$speedlimit, 1, 1), 
+                    "C", substr(injuryhead_noNAs$speedlimit, 2, 2), 
+                    "C", sep = "")))
+
+```
+
+
+
+
+\newpage
+## Works Cited
+
+\setlength{\parindent}{-0.2in}
+\setlength{\leftskip}{0.2in}
+\setlength{\parskip}{8pt}
+\noindent
+
+CDC. “Crash Deaths in the US: Where We Stand.” Centers for Disease Control and Prevention, 18 July 2016, https://www.cdc.gov/vitalsigns/motor-vehicle-safety/index.html.
+
+Hu, Winnie. “De Blasio Vowed to Make City Streets Safer. They’ve Turned More Deadly.” The New York Times, 30 Sept. 2021. NYTimes.com, https://www.nytimes.com/2021/09/30/nyregion/traffic-deaths-nyc.html.
+
+Hu, Winnie.  “De Blasio Vowed to Make City Streets Safer. They’ve Turned More Deadly.” The New York Times, 30 Sept. 2021. NYTimes.com, https://www.nytimes.com/2021/09/30/nyregion/traffic-deaths-nyc.html.
+
+Hu, Winnie. “New York Streets Are Nearly Empty, but Speeding Tickets Have Doubled.” The New York Times, 16 Apr. 2020. NYTimes.com, https://www.nytimes.com/2020/04/16/nyregion/coronavirus-nyc-speeding.html.
+
+M. Davis & Co. National Telephone Survey of Reported and Unreported Motor Vehicle Crashes. no. Findings Report. Report N. DOT HS 812 183)., July 2015, p. 244.
+
+Newly Released Estimates Show Traffic Fatalities Reached a 16-Year High in 2021 | NHTSA. 2022a, https://www.nhtsa.gov/press-releases/early-estimate-2021-traffic-fatalities.
+
+“New York Speeding Ticket Data.” Rosenblum Law, Nov. 2021, https://traffictickets.com/new-york/traffic-tickets/speeding-tickets/data/, https://traffictickets.com/new-york/traffic-tickets/speeding-tickets/data/.
+
+NHTSA Releases 2020 Traffic Crash Data | NHTSA. 2022b, https://www.nhtsa.gov/press-releases/2020-traffic-crash-data-fatalities.
+
+NYPD. Motor Vehicle Collisions - Crashes | NYC Open Data. NYC OpenData, May 2022, https://data.cityofnewyork.us/Public-Safety/Motor-Vehicle-Collisions-Crashes/h9gi-nx95.
+
+Routhier, Sarah. “Teen Drivers and Texting [Best and Worst States].” CarInsurance.Org, 6 June 2022, https://www.carinsurance.org/teen-driver-phone-use-study/.
+
+Traffic Data - Archive 2018. 2018, https://www1.nyc.gov/site/nypd/stats/traffic-data/traffic-data-archive-2018.page.
+
+Traffic Data - Archive 2019. 2019, https://www1.nyc.gov/site/nypd/stats/traffic-data/traffic-data-archive-2019.page.
+
+Traffic Data - Archive 2020. 2020, https://www1.nyc.gov/site/nypd/stats/traffic-data/traffic-data-archive-2020.page.
+
+Traffic Data - Archive 2021. 2021, https://www1.nyc.gov/site/nypd/stats/traffic-data/traffic-data-archive-2021.page.
+
+Traffic Data - Summonses. 2022, https://www1.nyc.gov/site/nypd/stats/traffic-data/traffic-data-moving.page.
+Police Crash Report Submission Instructions. p. 102.
+
+“VZV_Speed Limits.” NYC Open Data, https://data.cityofnewyork.us/Transportation/VZV_Speed-Limits/7n5j-865y. Accessed 22 June 2022.
+
+
